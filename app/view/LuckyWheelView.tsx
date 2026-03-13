@@ -9,11 +9,14 @@ interface Segment {
   text: string;
   color: string;
   textColor: string;
+  weight: number;
 }
 
 interface WheelConfig {
   title: string;
   segmentsRaw: string;
+  resultSequence: string;
+  isAdvancedMode: boolean;
 }
 
 interface HistoryItem {
@@ -54,6 +57,9 @@ const LuckyWheelView: React.FC = () => {
   const [segmentsRaw, setSegmentsRaw] = useState<string>(INITIAL_SEGMENTS_TEXT.join('\n'));
   const [isSidebarOpen, setIsSidebarOpen] = useState<boolean>(false);
   const [history, setHistory] = useState<HistoryItem[]>([]);
+  const [resultSequence, setResultSequence] = useState<string>('');
+  const [isAdvancedMode, setIsAdvancedMode] = useState<boolean>(false);
+  const [activeTab, setActiveTab] = useState<'config' | 'sequence'>('config');
 
   // Spin states
   const [rotation, setRotation] = useState<number>(0);
@@ -66,13 +72,19 @@ const LuckyWheelView: React.FC = () => {
       .split('\n')
       .map((line) => line.trim())
       .filter((line) => line !== '')
-      .map((label, idx) => ({
-        id: idx,
-        label,
-        text: '',
-        color: COLORS[idx % COLORS.length].bg,
-        textColor: COLORS[idx % COLORS.length].text,
-      }));
+      .map((line, idx) => {
+        const parts = line.split('|');
+        const label = parts[0].trim();
+        const weight = parts[1] ? parseFloat(parts[1].trim()) || 1 : 1;
+        return {
+          id: idx,
+          label,
+          text: '',
+          color: COLORS[idx % COLORS.length].bg,
+          textColor: COLORS[idx % COLORS.length].text,
+          weight,
+        };
+      });
   }, [segmentsRaw]);
 
   // Load from localStorage on mount
@@ -86,6 +98,8 @@ const LuckyWheelView: React.FC = () => {
           const config: WheelConfig = JSON.parse(savedConfig);
           setWheelTitle(config.title);
           setSegmentsRaw(config.segmentsRaw);
+          if (config.resultSequence) setResultSequence(config.resultSequence);
+          if (config.isAdvancedMode !== undefined) setIsAdvancedMode(config.isAdvancedMode);
         } catch (e) {
           console.error('Failed to parse saved config', e);
         }
@@ -107,7 +121,7 @@ const LuckyWheelView: React.FC = () => {
   }, []);
 
   const handleUpdatePersistence = useCallback(() => {
-    const config: WheelConfig = { title: wheelTitle, segmentsRaw };
+    const config: WheelConfig = { title: wheelTitle, segmentsRaw, resultSequence, isAdvancedMode };
     localStorage.setItem('lucky_wheel_config', JSON.stringify(config));
 
     setHistory((prev) => {
@@ -121,7 +135,7 @@ const LuckyWheelView: React.FC = () => {
     });
 
     setIsSidebarOpen(false);
-  }, [wheelTitle, segmentsRaw]);
+  }, [wheelTitle, segmentsRaw, resultSequence, isAdvancedMode]);
 
   const handleReset = useCallback(() => {
     setWheelTitle('TẶNG QUÀ GÌ CHO BẠN GÁI?');
@@ -137,13 +151,99 @@ const LuckyWheelView: React.FC = () => {
     setWinner(null);
   }, []);
 
+  const handleShuffle = useCallback(() => {
+    const lines = segmentsRaw
+      .split('\n')
+      .map((l) => l.trim())
+      .filter((l) => l !== '');
+    for (let i = lines.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [lines[i], lines[j]] = [lines[j], lines[i]];
+    }
+    setSegmentsRaw(lines.join('\n'));
+  }, [segmentsRaw]);
+
+  const handleSort = useCallback(
+    (order: 'asc' | 'desc') => {
+      const lines = segmentsRaw
+        .split('\n')
+        .map((l) => l.trim())
+        .filter((l) => l !== '');
+      lines.sort((a, b) => {
+        const labelA = a.split('|')[0].trim().toLowerCase();
+        const labelB = b.split('|')[0].trim().toLowerCase();
+        return order === 'asc' ? labelA.localeCompare(labelB) : labelB.localeCompare(labelA);
+      });
+      setSegmentsRaw(lines.join('\n'));
+    },
+    [segmentsRaw]
+  );
+
+  const addToSequence = useCallback(
+    (label: string) => {
+      const current = resultSequence
+        .split(',')
+        .map((s) => s.trim())
+        .filter((s) => s !== '');
+      setResultSequence([...current, label].join(', '));
+    },
+    [resultSequence]
+  );
+
+  const removeFromSequence = useCallback(
+    (idx: number) => {
+      const current = resultSequence
+        .split(',')
+        .map((s) => s.trim())
+        .filter((s) => s !== '');
+      current.splice(idx, 1);
+      setResultSequence(current.join(', '));
+    },
+    [resultSequence]
+  );
+
   const handleSpin = useCallback(() => {
     if (isSpinning || segments.length === 0) return;
 
     setIsSpinning(true);
     setWinner(null);
 
-    const winnerIdx = Math.floor(Math.random() * segments.length);
+    let winnerIdx = -1;
+
+    // Check if there is a rigged sequence
+    if (resultSequence.trim() !== '') {
+      const sequence = resultSequence
+        .split(',')
+        .map((s) => s.trim())
+        .filter((s) => s !== '');
+      if (sequence.length > 0) {
+        const nextTarget = sequence[0];
+        // Find the index of the target label
+        winnerIdx = segments.findIndex((s) => s.label.toLowerCase() === nextTarget.toLowerCase());
+
+        // If found, update the sequence (remove the first item)
+        if (winnerIdx !== -1) {
+          setResultSequence(sequence.slice(1).join(', '));
+        }
+      }
+    }
+
+    // fallback to weighted random or if sequence item not found
+    if (winnerIdx === -1) {
+      const totalWeight = segments.reduce((acc, curr) => acc + curr.weight, 0);
+      let random = Math.random() * totalWeight;
+      for (let i = 0; i < segments.length; i++) {
+        if (random < segments[i].weight) {
+          winnerIdx = i;
+          break;
+        }
+        random -= segments[i].weight;
+      }
+    }
+
+    // Safety check
+    if (winnerIdx === -1) winnerIdx = Math.floor(Math.random() * segments.length);
+
     const segmentAngle = 360 / segments.length;
 
     // Calculate how much we need to rotate to land on the winnerIdx
@@ -162,7 +262,7 @@ const LuckyWheelView: React.FC = () => {
       setIsSpinning(false);
       setWinner(segments[winnerIdx]);
     }, 5000);
-  }, [isSpinning, segments, rotation]);
+  }, [isSpinning, segments, rotation, resultSequence]);
 
   const getClipPath = (count: number) => {
     if (count <= 1) return 'polygon(0 0, 100% 0, 100% 100%, 0 100%)';
@@ -249,31 +349,227 @@ const LuckyWheelView: React.FC = () => {
           </button>
         </div>
 
-        <div className="space-y-8 md:space-y-10">
-          <div className="space-y-2 md:space-y-3 group">
-            <label className="text-gold/50 text-[10px] md:text-[11px] font-black uppercase tracking-[2px] md:tracking-[3px] ml-1 group-focus-within:text-gold transition-colors">
-              Tiêu đề vòng quay
-            </label>
-            <input
-              type="text"
-              value={wheelTitle}
-              onChange={(e) => setWheelTitle(e.target.value)}
-              className="w-full bg-white/5 border border-white/10 text-white rounded-xl md:rounded-2xl px-4 py-3 md:px-6 md:py-4 text-lg md:text-xl font-black outline-none focus:border-gold/50 focus:bg-white/10 focus:ring-4 focus:ring-gold/10 transition-all placeholder:text-white/10 shadow-inner"
-              placeholder="NHẬP TIÊU ĐỀ..."
-            />
-          </div>
+        <div className="flex gap-2 p-1 bg-white/5 rounded-xl mb-8">
+          <button
+            onClick={() => setActiveTab('config')}
+            className={`flex-1 py-2.5 cursor-pointer rounded-lg text-xs font-black uppercase tracking-widest transition-all ${activeTab === 'config' ? 'bg-gold text-primary-blue shadow-lg' : 'text-white/40 hover:text-white/60'}`}
+          >
+            Cấu hình
+          </button>
+          <button
+            onClick={() => setActiveTab('sequence')}
+            className={`flex-1 py-2.5 cursor-pointer    rounded-lg text-xs font-black uppercase tracking-widest transition-all ${activeTab === 'sequence' ? 'bg-gold text-primary-blue shadow-lg' : 'text-white/40 hover:text-white/60'}`}
+          >
+            Kết quả
+          </button>
+        </div>
 
-          <div className="space-y-2 md:space-y-3 group">
-            <label className="text-gold/50 text-[10px] md:text-[11px] font-black uppercase tracking-[2px] md:tracking-[3px] ml-1 group-focus-within:text-gold transition-colors">
-              Danh sách thành phần
-            </label>
-            <textarea
-              value={segmentsRaw}
-              onChange={(e) => setSegmentsRaw(e.target.value)}
-              className="w-full h-[250px] md:h-[350px] bg-black/40 border border-white/5 text-white rounded-2xl md:rounded-3xl p-5 md:p-7 font-bold text-base md:text-lg resize-none outline-none focus:border-gold/20 focus:bg-black/60 focus:ring-4 focus:ring-gold/5 transition-all scrollbar-hide shadow-2xl leading-relaxed"
-              placeholder="Mỗi dòng một lựa chọn..."
-            />
-          </div>
+        <div className="space-y-8 md:space-y-10">
+          {activeTab === 'config' ? (
+            <>
+              <div className="space-y-2 md:space-y-3 group">
+                <label className="text-gold/50 text-[10px] md:text-[11px] font-black uppercase tracking-[2px] md:tracking-[3px] ml-1 group-focus-within:text-gold transition-colors">
+                  Tiêu đề vòng quay
+                </label>
+                <input
+                  type="text"
+                  value={wheelTitle}
+                  onChange={(e) => setWheelTitle(e.target.value)}
+                  className="w-full bg-white/5 border border-white/10 text-white rounded-xl md:rounded-2xl px-4 py-3 md:px-6 md:py-4 text-lg md:text-xl font-black outline-none focus:border-gold/50 focus:bg-white/10 focus:ring-4 focus:ring-gold/10 transition-all placeholder:text-white/10 shadow-inner"
+                  placeholder="NHẬP TIÊU ĐỀ..."
+                />
+              </div>
+
+              <div className="space-y-4 md:space-y-6">
+                <div className="flex flex-wrap gap-2 md:gap-3">
+                  <button
+                    onClick={handleShuffle}
+                    className="flex-1 bg-white/5 hover:bg-white/10 text-white/70 hover:text-white border border-white/10 py-3 rounded-xl text-[10px] md:text-xs font-black transition-all active:scale-95 cursor-pointer uppercase tracking-wider flex items-center justify-center gap-2"
+                  >
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      width="14"
+                      height="14"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="3"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    >
+                      <polyline points="16 3 21 3 21 8"></polyline>
+                      <line x1="4" y1="20" x2="21" y2="3"></line>
+                      <polyline points="21 16 21 21 16 21"></polyline>
+                      <line x1="15" y1="15" x2="21" y2="21"></line>
+                      <line x1="4" y1="4" x2="9" y2="9"></line>
+                    </svg>
+                    Random
+                  </button>
+                  <button
+                    onClick={() => handleSort('asc')}
+                    className="flex-1 bg-white/5 hover:bg-white/10 text-white/70 hover:text-white border border-white/10 py-3 rounded-xl text-[10px] md:text-xs font-black transition-all active:scale-95 cursor-pointer uppercase tracking-wider flex items-center justify-center gap-2"
+                  >
+                    A → Z
+                  </button>
+                  <button
+                    onClick={() => handleSort('desc')}
+                    className="flex-1 bg-white/5 hover:bg-white/10 text-white/70 hover:text-white border border-white/10 py-3 rounded-xl text-[10px] md:text-xs font-black transition-all active:scale-95 cursor-pointer uppercase tracking-wider flex items-center justify-center gap-2"
+                  >
+                    Z → A
+                  </button>
+                </div>
+
+                <div className="space-y-2 md:space-y-3 group">
+                  <div className="flex items-center justify-between px-1">
+                    <label className="text-gold/50 text-[10px] md:text-[11px] font-black uppercase tracking-[2px] md:tracking-[3px] group-focus-within:text-gold transition-colors">
+                      Danh sách quà
+                    </label>
+                    <button
+                      onClick={() => setIsAdvancedMode(!isAdvancedMode)}
+                      className={`text-[9px] font-black uppercase tracking-widest px-2 py-1 rounded-md transition-all ${isAdvancedMode ? 'bg-gold text-primary-blue' : 'bg-white/5 text-white/30 hover:text-white/60'}`}
+                    >
+                      Nâng cao {isAdvancedMode ? 'ON' : 'OFF'}
+                    </button>
+                  </div>
+                  <textarea
+                    value={segmentsRaw}
+                    onChange={(e) => setSegmentsRaw(e.target.value)}
+                    className="w-full h-[200px] md:h-[300px] bg-black/40 border border-white/5 text-white rounded-2xl md:rounded-3xl p-5 md:p-7 font-bold text-base md:text-lg resize-none outline-none focus:border-gold/20 focus:bg-black/60 focus:ring-4 focus:ring-gold/5 transition-all scrollbar-hide shadow-2xl leading-relaxed"
+                    placeholder={
+                      isAdvancedMode
+                        ? 'Tên quà | Trọng số (ví dụ: iPhone | 1)...'
+                        : 'Mỗi dòng một quà...'
+                    }
+                  />
+                  {isAdvancedMode && (
+                    <div className="space-y-3 pt-4 animate-in fade-in slide-in-from-top-2 duration-300">
+                      <div className="space-y-2 group/rig">
+                        <label className="text-gold/50 text-[10px] min-[11px] font-black uppercase tracking-[2px] md:tracking-[3px] ml-1 group-focus-within/rig:text-gold transition-colors">
+                          Thứ tự kết quả (Ngăn cách bởi dấu phẩy)
+                        </label>
+                        <input
+                          type="text"
+                          value={resultSequence}
+                          onChange={(e) => setResultSequence(e.target.value)}
+                          className="w-full bg-white/5 border border-white/10 text-white rounded-xl px-4 py-3 text-sm font-bold outline-none focus:border-gold/30 focus:bg-white/10 transition-all placeholder:text-white/10"
+                          placeholder="iPhone, Mac, iPad..."
+                        />
+                        <p className="text-[9px] text-white/30 italic px-1 leading-tight">
+                          * Cài đặt kết quả sẽ ra theo thứ tự. Nếu để trống sẽ quay ngẫu nhiên theo
+                          tỉ lệ.
+                        </p>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </>
+          ) : (
+            <div className="space-y-8 animate-in fade-in slide-in-from-right-4 duration-300">
+              <div className="space-y-4">
+                <label className="text-gold/50 text-[10px] md:text-[11px] font-black uppercase tracking-[2px] md:tracking-[3px] ml-1">
+                  Chọn kết quả cho vòng tiếp theo
+                </label>
+                <select
+                  onChange={(e) => {
+                    if (e.target.value) {
+                      addToSequence(e.target.value);
+                      e.target.value = '';
+                    }
+                  }}
+                  className="w-full bg-white/5 border border-white/10 text-white rounded-xl px-4 py-4 text-sm font-bold outline-none focus:border-gold/30 focus:bg-white/10 transition-all cursor-pointer shadow-inner appearance-none"
+                >
+                  <option value="" className="bg-primary-blue">
+                    -- CHỌN QUÀ --
+                  </option>
+                  {segments.map((seg) => (
+                    <option key={seg.id} value={seg.label} className="bg-primary-blue text-white">
+                      {seg.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="space-y-4">
+                <div className="flex items-center justify-between px-1">
+                  <label className="text-gold/50 text-[10px] md:text-[11px] font-black uppercase tracking-[2px] md:tracking-[3px]">
+                    Danh sách đã chọn ({resultSequence.split(',').filter(Boolean).length})
+                  </label>
+                  {resultSequence && (
+                    <button
+                      onClick={() => setResultSequence('')}
+                      className="text-[9px] font-black text-rose-400 hover:text-rose-300 uppercase tracking-widest transition-colors"
+                    >
+                      Xóa tất cả
+                    </button>
+                  )}
+                </div>
+
+                <div className="space-y-2 max-h-[400px] overflow-y-auto pr-2 scrollbar-hide">
+                  {resultSequence
+                    .split(',')
+                    .map((s) => s.trim())
+                    .filter((s) => s !== '')
+                    .map((label, idx) => (
+                      <div
+                        key={`${label}-${idx}`}
+                        className="group flex items-center justify-between bg-white/5 hover:bg-white/10 border border-white/5 rounded-xl px-4 py-3 transition-all"
+                      >
+                        <div className="flex items-center gap-3">
+                          <span className="w-5 h-5 rounded-full bg-gold/20 flex items-center justify-center text-[10px] font-black text-gold">
+                            {idx + 1}
+                          </span>
+                          <span className="text-white font-bold text-sm tracking-wide">
+                            {label}
+                          </span>
+                        </div>
+                        <button
+                          onClick={() => removeFromSequence(idx)}
+                          className="p-1 text-white/20 hover:text-rose-400 transition-colors"
+                        >
+                          <svg
+                            xmlns="http://www.w3.org/2000/svg"
+                            width="16"
+                            height="16"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="3"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          >
+                            <line x1="18" y1="6" x2="6" y2="18"></line>
+                            <line x1="6" y1="6" x2="18" y2="18"></line>
+                          </svg>
+                        </button>
+                      </div>
+                    ))}
+                  {!resultSequence.trim() && (
+                    <div className="flex flex-col items-center justify-center py-12 md:py-20 text-center space-y-4">
+                      <svg
+                        xmlns="http://www.w3.org/2000/svg"
+                        width="48"
+                        height="48"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="#fff"
+                        strokeWidth="1.5"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      >
+                        <circle cx="12" cy="12" r="10"></circle>
+                        <line x1="12" y1="8" x2="12" y2="12"></line>
+                        <line x1="12" y1="16" x2="12.01" y2="16"></line>
+                      </svg>
+                      <p className="text-xs font-black uppercase tracking-widest text-white">
+                        Chưa có kết quả được chọn
+                      </p>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
 
           <div className="flex gap-3 md:gap-5 pt-2">
             <button
