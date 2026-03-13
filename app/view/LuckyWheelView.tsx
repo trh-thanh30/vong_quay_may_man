@@ -35,8 +35,8 @@ const INITIAL_SEGMENTS_TEXT = [
 ];
 
 const COLORS = [
-  { bg: '#f6e05e', text: '#0a1e5e' }, // Lighter Gold/Yellow
-  { bg: '#fef3c7', text: '#0a1e5e' }, // Lightest Cream/Yellow
+  { bg: '#fac400', text: '#0a1e5e' }, // Lighter Gold/Yellow
+  { bg: '#ffdc81', text: '#0a1e5e' }, // Lightest Cream/Yellow
 ];
 
 const HISTORY_PRESETS: HistoryItem[] = [
@@ -146,9 +146,15 @@ const LuckyWheelView: React.FC = () => {
     const winnerIdx = Math.floor(Math.random() * segments.length);
     const segmentAngle = 360 / segments.length;
 
-    const extraSpins = 5 + Math.floor(Math.random() * 5);
+    // Calculate how much we need to rotate to land on the winnerIdx
+    // The wheel center is rotated by -segmentAngle/2, so segment 0 center is at 0 degrees (top)
     const targetAngle = 360 - winnerIdx * segmentAngle;
-    const totalRotation = rotation + 360 * extraSpins + targetAngle;
+    const extraSpins = 5 + Math.floor(Math.random() * 5);
+
+    // Core fix: Calculate total rotation from current position to target correctly
+    const currentRotationNormalized = rotation % 360;
+    const rotationDelta = (targetAngle - currentRotationNormalized + 360) % 360;
+    const totalRotation = rotation + rotationDelta + 360 * extraSpins;
 
     setRotation(totalRotation);
 
@@ -319,6 +325,16 @@ const LuckyWheelView: React.FC = () => {
       </div>
 
       <div className="relative z-10 flex flex-col xl:flex-row w-full max-w-[1600px] px-4 md:px-16 items-center justify-center xl:justify-between gap-8 md:gap-12 py-6 md:py-20">
+        <div className="xl:hidden relative w-full max-w-[500px] aspect-square md:aspect-4/3 max-h-[300px] md:max-h-none mb-4 overflow-hidden animate-in fade-in slide-in-from-top duration-1000">
+          <Image
+            src="/new-year.png"
+            alt="New Year 2026"
+            fill
+            className="object-contain drop-shadow-[0_20px_50px_rgba(0,0,0,0.5)] hover:scale-[1.02] transition-transform duration-700 select-none"
+            priority
+          />
+        </div>
+
         <div className="flex-1 flex justify-center scale-100 sm:scale-100 md:scale-100 xl:scale-110 transition-transform duration-1000 ease-out origin-center">
           <div className="relative w-[380px] h-[380px] md:w-[620px] md:h-[620px] drop-shadow-[0_40px_80px_rgba(0,0,0,0.6)]">
             <div className="absolute inset-[-6px] md:inset-[-10px] rounded-full bg-gradient-to-br from-[#b18d2d] via-gold to-[#b18d2d] shadow-2xl opacity-60" />
@@ -527,7 +543,7 @@ const LuckyWheelView: React.FC = () => {
               </h3>
             </div>
 
-            <div className="relative w-full aspect-square md:aspect-4/3 max-h-[300px] md:max-h-none mb-10 overflow-hidden">
+            <div className="hidden xl:block relative w-full aspect-square md:aspect-4/3 max-h-[300px] md:max-h-none mb-10 overflow-hidden">
               <Image
                 src="/new-year.png"
                 alt="New Year 2026"
