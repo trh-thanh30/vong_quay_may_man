@@ -223,7 +223,7 @@ const LuckyWheelView: React.FC = () => {
 
           <button
             onClick={() => setIsSidebarOpen(false)}
-            className="absolute -right-2 md:-right-8 -top-2 md:-top-12 p-2 cursor-pointer text-white/30 hover:text-white hover:rotate-90 transition-all duration-300"
+            className="absolute -right-6 md:-right-8 -top-6 md:-top-12 p-2 cursor-pointer text-white/30 hover:text-white hover:rotate-90 transition-all duration-300"
           >
             <svg
               xmlns="http://www.w3.org/2000/svg"
