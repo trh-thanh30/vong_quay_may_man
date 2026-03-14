@@ -9,7 +9,7 @@ interface Segment {
   text: string;
   color: string;
   textColor: string;
-  weight: number;
+  weight: number | string;
 }
 
 interface WheelConfig {
@@ -52,14 +52,43 @@ const HISTORY_PRESETS: HistoryItem[] = [
   { title: 'Tặng quà gì cho bạn gái?', segmentsRaw: INITIAL_SEGMENTS_TEXT.join('\n') },
 ];
 
-const LuckyWheelView: React.FC = () => {
+interface LuckyWheelInstanceProps {
+  instanceId: string;
+  isActive: boolean;
+  onTitleChange: (title: string) => void;
+  isMusicPlaying: boolean;
+  toggleMusic: () => void;
+}
+
+const LuckyWheelInstance: React.FC<LuckyWheelInstanceProps> = ({
+  instanceId,
+  isActive,
+  onTitleChange,
+  isMusicPlaying,
+  toggleMusic,
+}) => {
   const [wheelTitle, setWheelTitle] = useState<string>('TẶNG QUÀ GÌ CHO BẠN GÁI?');
   const [segmentsRaw, setSegmentsRaw] = useState<string>(INITIAL_SEGMENTS_TEXT.join('\n'));
   const [isSidebarOpen, setIsSidebarOpen] = useState<boolean>(false);
   const [history, setHistory] = useState<HistoryItem[]>([]);
   const [resultSequence, setResultSequence] = useState<string>('');
   const [isAdvancedMode, setIsAdvancedMode] = useState<boolean>(false);
-  const [activeTab, setActiveTab] = useState<'config' | 'sequence'>('config');
+  const [activeTab, setActiveTab] = useState<'config' | 'probability' | 'sequence'>('config');
+
+  const handleWeightChange = useCallback(
+    (index: number, newWeight: number | string) => {
+      const lines = segmentsRaw.split('\n').filter((line) => line.trim() !== '');
+      const newLines = lines.map((line, idx) => {
+        if (idx === index) {
+          const parts = line.split('|');
+          return `${parts[0].trim()} | ${newWeight}`;
+        }
+        return line.trim();
+      });
+      setSegmentsRaw(newLines.join('\n'));
+    },
+    [segmentsRaw]
+  );
 
   // Spin states
   const [rotation, setRotation] = useState<number>(0);
@@ -75,14 +104,16 @@ const LuckyWheelView: React.FC = () => {
       .map((line, idx) => {
         const parts = line.split('|');
         const label = parts[0].trim();
-        const weight = parts[1] ? parseFloat(parts[1].trim()) || 1 : 1;
+        // Allow the weight to be physically empty in the text, so we parse it to NaN if empty
+        const weightRaw = parts[1] ? parts[1].trim() : '';
+        const weight = weightRaw === '' ? NaN : parseFloat(weightRaw) || 1;
         return {
           id: idx,
           label,
           text: '',
           color: COLORS[idx % COLORS.length].bg,
           textColor: COLORS[idx % COLORS.length].text,
-          weight,
+          weight: isNaN(weight) ? '' : weight, // store '' if it's completely empty so input goes blank
         };
       });
   }, [segmentsRaw]);
@@ -90,7 +121,10 @@ const LuckyWheelView: React.FC = () => {
   // Load from localStorage on mount
   useEffect(() => {
     const loadConfig = () => {
-      const savedConfig = localStorage.getItem('lucky_wheel_config');
+      let savedConfig = localStorage.getItem(`lucky_wheel_config_${instanceId}`);
+      if (!savedConfig && instanceId === 'default') {
+        savedConfig = localStorage.getItem('lucky_wheel_config');
+      }
       const savedHistory = localStorage.getItem('lucky_wheel_history');
 
       if (savedConfig) {
@@ -118,11 +152,18 @@ const LuckyWheelView: React.FC = () => {
 
     const timer = setTimeout(loadConfig, 0);
     return () => clearTimeout(timer);
-  }, []);
+  }, [instanceId]);
+
+  useEffect(() => {
+    onTitleChange(wheelTitle);
+  }, [wheelTitle, onTitleChange]);
 
   const handleUpdatePersistence = useCallback(() => {
     const config: WheelConfig = { title: wheelTitle, segmentsRaw, resultSequence, isAdvancedMode };
-    localStorage.setItem('lucky_wheel_config', JSON.stringify(config));
+    localStorage.setItem(`lucky_wheel_config_${instanceId}`, JSON.stringify(config));
+    if (instanceId === 'default') {
+      localStorage.setItem('lucky_wheel_config', JSON.stringify(config));
+    }
 
     setHistory((prev) => {
       const exists = prev.some((item) => item.title === wheelTitle);
@@ -135,7 +176,7 @@ const LuckyWheelView: React.FC = () => {
     });
 
     setIsSidebarOpen(false);
-  }, [wheelTitle, segmentsRaw, resultSequence, isAdvancedMode]);
+  }, [wheelTitle, segmentsRaw, resultSequence, isAdvancedMode, instanceId]);
 
   const handleReset = useCallback(() => {
     setWheelTitle('TẶNG QUÀ GÌ CHO BẠN GÁI?');
@@ -230,14 +271,15 @@ const LuckyWheelView: React.FC = () => {
 
     // fallback to weighted random or if sequence item not found
     if (winnerIdx === -1) {
-      const totalWeight = segments.reduce((acc, curr) => acc + curr.weight, 0);
+      const totalWeight = segments.reduce((acc, curr) => acc + (Number(curr.weight) || 0), 0);
       let random = Math.random() * totalWeight;
       for (let i = 0; i < segments.length; i++) {
-        if (random < segments[i].weight) {
+        const weight = Number(segments[i].weight) || 0;
+        if (random < weight) {
           winnerIdx = i;
           break;
         }
-        random -= segments[i].weight;
+        random -= weight;
       }
     }
 
@@ -284,7 +326,9 @@ const LuckyWheelView: React.FC = () => {
   };
 
   return (
-    <div className="relative w-full min-h-screen overflow-hidden flex items-center justify-center font-sans tracking-tight">
+    <div
+      className={`relative w-full min-h-screen overflow-hidden flex items-center justify-center font-sans tracking-tight ${isActive ? '' : 'hidden'}`}
+    >
       <div
         className="absolute inset-0 bg-cover bg-center z-0 scale-105"
         style={{ backgroundImage: "url('/bg-new-year.png')" }}
@@ -311,6 +355,48 @@ const LuckyWheelView: React.FC = () => {
           <line x1="3" y1="6" x2="21" y2="6"></line>
           <line x1="3" y1="18" x2="21" y2="18"></line>
         </svg>
+      </button>
+
+      <button
+        onClick={toggleMusic}
+        className="absolute top-20 left-4 md:top-32 md:left-8 z-50 p-3 md:p-4 bg-white/10 backdrop-blur-xl border border-white/20 rounded-xl md:rounded-2xl cursor-pointer hover:bg-gold/20 hover:border-gold/40 transition-all shadow-2xl group text-white"
+        title={isMusicPlaying ? 'Tắt nhạc' : 'Bật nhạc'}
+      >
+        {isMusicPlaying ? (
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="20"
+            height="20"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className="md:w-6 md:h-6 group-hover:text-gold transition-colors"
+          >
+            <path d="M11 5L6 9H2v6h4l5 4V5z"></path>
+            <path d="M19.07 4.93a10 10 0 0 1 0 14.14"></path>
+            <path d="M15.54 8.46a5 5 0 0 1 0 7.07"></path>
+          </svg>
+        ) : (
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="20"
+            height="20"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className="md:w-6 md:h-6 group-hover:text-gold transition-colors"
+          >
+            <path d="M11 5L6 9H2v6h4l5 4V5z"></path>
+            <line x1="23" y1="9" x2="17" y2="15"></line>
+            <line x1="17" y1="9" x2="23" y2="15"></line>
+          </svg>
+        )}
       </button>
 
       <div
@@ -357,6 +443,12 @@ const LuckyWheelView: React.FC = () => {
             Cấu hình
           </button>
           <button
+            onClick={() => setActiveTab('probability')}
+            className={`flex-1 py-2.5 cursor-pointer rounded-lg text-xs font-black uppercase tracking-widest transition-all ${activeTab === 'probability' ? 'bg-gold text-primary-blue shadow-lg' : 'text-white/40 hover:text-white/60'}`}
+          >
+            Tỉ lệ
+          </button>
+          <button
             onClick={() => setActiveTab('sequence')}
             className={`flex-1 py-2.5 cursor-pointer    rounded-lg text-xs font-black uppercase tracking-widest transition-all ${activeTab === 'sequence' ? 'bg-gold text-primary-blue shadow-lg' : 'text-white/40 hover:text-white/60'}`}
           >
@@ -365,7 +457,7 @@ const LuckyWheelView: React.FC = () => {
         </div>
 
         <div className="space-y-8 md:space-y-10">
-          {activeTab === 'config' ? (
+          {activeTab === 'config' && (
             <>
               <div className="space-y-2 md:space-y-3 group">
                 <label className="text-gold/50 text-[10px] md:text-[11px] font-black uppercase tracking-[2px] md:tracking-[3px] ml-1 group-focus-within:text-gold transition-colors">
@@ -464,7 +556,72 @@ const LuckyWheelView: React.FC = () => {
                 </div>
               </div>
             </>
-          ) : (
+          )}
+
+          {activeTab === 'probability' && (
+            <div className="space-y-6 animate-in fade-in slide-in-from-right-4 duration-300">
+              <div className="flex items-center justify-between px-1">
+                <label className="text-gold/50 text-[10px] md:text-[11px] font-black uppercase tracking-[2px] md:tracking-[3px]">
+                  Cài đặt tỉ lệ ({segments.length} phần tử)
+                </label>
+              </div>
+              <p className="text-[9px] text-white/30 italic px-1 leading-tight mb-2">
+                * Tỉ lệ được tính theo %, lớn nhất là 100, bé nhất là 0.
+              </p>
+
+              <div className="space-y-3 max-h-[400px] overflow-y-auto pr-2 scrollbar-hide">
+                {segments.map((seg, idx) => (
+                  <div
+                    key={seg.id}
+                    className="group flex items-center justify-between bg-white/5 hover:bg-white/10 border border-white/5 rounded-xl px-4 py-3 transition-all"
+                  >
+                    <div className="flex flex-col gap-1 w-[55%]">
+                      <span className="text-white font-bold text-sm tracking-wide truncate">
+                        {seg.label}
+                      </span>
+                    </div>
+                    <div className="w-[45%] flex items-center justify-end gap-2">
+                      <span className="text-white/50 text-xs text-nowrap">Tỉ lệ:</span>
+                      <input
+                        type="number"
+                        min="0"
+                        max="100"
+                        step="1"
+                        value={seg.weight}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          if (val === '') {
+                            handleWeightChange(idx, '');
+                            return;
+                          }
+                          let num = parseInt(val, 10);
+                          if (isNaN(num)) return;
+                          num = Math.max(0, Math.min(100, num));
+                          handleWeightChange(idx, num);
+                        }}
+                        onBlur={() => {
+                          if (seg.weight === '' || isNaN(Number(seg.weight))) {
+                            handleWeightChange(idx, 1);
+                          }
+                        }}
+                        className="w-[70px] bg-black/40 border border-white/10 text-white rounded-lg px-2 py-1.5 text-sm font-bold outline-none focus:border-gold/30 focus:bg-white/10 transition-all text-right select-all"
+                      />
+                    </div>
+                  </div>
+                ))}
+
+                {segments.length === 0 && (
+                  <div className="flex flex-col items-center justify-center py-12 md:py-20 text-center space-y-4">
+                    <p className="text-xs font-black uppercase tracking-widest text-white/50">
+                      Chưa có phần tử nào
+                    </p>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'sequence' && (
             <div className="space-y-8 animate-in fade-in slide-in-from-right-4 duration-300">
               <div className="space-y-4">
                 <label className="text-gold/50 text-[10px] md:text-[11px] font-black uppercase tracking-[2px] md:tracking-[3px] ml-1">
@@ -909,6 +1066,171 @@ const LuckyWheelView: React.FC = () => {
           </div>
         </div>
       )}
+    </div>
+  );
+};
+
+const LuckyWheelView: React.FC = () => {
+  const [tabs, setTabs] = useState<{ id: string; title: string }[]>([]);
+  const [activeTab, setActiveTab] = useState<string>('');
+  const [isMusicPlaying, setIsMusicPlaying] = useState<boolean>(false);
+  const audioRef = React.useRef<HTMLAudioElement | null>(null);
+
+  useEffect(() => {
+    // Initialize audio
+    const audio = new Audio('/audio/tay_du_ki.mp3');
+    audio.loop = true;
+    audioRef.current = audio;
+
+    return () => {
+      audio.pause();
+      audio.src = '';
+    };
+  }, []);
+
+  const toggleMusic = useCallback(() => {
+    if (!audioRef.current) return;
+
+    if (isMusicPlaying) {
+      audioRef.current.pause();
+      setIsMusicPlaying(false);
+    } else {
+      audioRef.current.play().catch((err) => console.log('Autoplay blocked:', err));
+      setIsMusicPlaying(true);
+    }
+  }, [isMusicPlaying]);
+
+  useEffect(() => {
+    const loadTabs = () => {
+      const savedTabs = localStorage.getItem('lucky_wheel_tabs');
+      if (savedTabs) {
+        try {
+          const parsed = JSON.parse(savedTabs);
+          if (parsed.length > 0) {
+            setTabs(parsed);
+            setActiveTab(parsed[0].id);
+          } else {
+            setTabs([{ id: 'default', title: 'Vòng quay' }]);
+            setActiveTab('default');
+          }
+        } catch (e) {
+          setTabs([{ id: 'default', title: 'Vòng quay' }]);
+          setActiveTab('default');
+        }
+      } else {
+        setTabs([{ id: 'default', title: 'Vòng quay' }]);
+        setActiveTab('default');
+      }
+    };
+
+    const timer = setTimeout(loadTabs, 0);
+    return () => clearTimeout(timer);
+  }, []);
+
+  useEffect(() => {
+    if (tabs.length > 0) {
+      localStorage.setItem('lucky_wheel_tabs', JSON.stringify(tabs));
+    }
+  }, [tabs]);
+
+  const addTab = () => {
+    const newId = Date.now().toString();
+    setTabs((prev) => [...prev, { id: newId, title: 'Vòng quay mới' }]);
+    setActiveTab(newId);
+  };
+
+  const removeTab = (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (tabs.length === 1) return; // don't remove last tab
+    setTabs((prev) => {
+      const newTabs = prev.filter((t) => t.id !== id);
+      if (activeTab === id) {
+        const removedIdx = prev.findIndex((t) => t.id === id);
+        const nextActive = newTabs[Math.max(0, removedIdx - 1)];
+        setActiveTab(nextActive.id);
+      }
+      return newTabs;
+    });
+    localStorage.removeItem(`lucky_wheel_config_${id}`);
+  };
+
+  const handleTitleChange = useCallback((id: string, newTitle: string) => {
+    setTabs((prev) => {
+      const tab = prev.find((t) => t.id === id);
+      if (tab && tab.title === newTitle) return prev;
+      return prev.map((t) => (t.id === id ? { ...t, title: newTitle } : t));
+    });
+  }, []);
+
+  if (tabs.length === 0 || !activeTab) return <div className="min-h-screen bg-black" />;
+
+  return (
+    <div className="relative w-full min-h-screen bg-black">
+      <div className="absolute top-4 left-1/2 -translate-x-1/2 z-[50] flex items-center gap-2 max-w-[calc(100vw-60px)] md:max-w-[80vw] overflow-x-auto px-2 py-2 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
+        {tabs.map((tab) => (
+          <div
+            key={tab.id}
+            onClick={() => setActiveTab(tab.id)}
+            className={`flex items-center gap-2 px-4 py-2 rounded-full cursor-pointer transition-all border backdrop-blur-xl whitespace-nowrap shrink-0 group ${activeTab === tab.id ? 'bg-gold/20 border-gold/50 text-gold shadow-[0_0_15px_rgba(243,195,77,0.3)]' : 'bg-white/5 border-white/10 text-white/70 hover:bg-white/10'}`}
+          >
+            <span className="font-bold text-xs md:text-sm max-w-[100px] md:max-w-[150px] overflow-hidden text-ellipsis">
+              {tab.title}
+            </span>
+            {tabs.length > 1 && (
+              <button
+                onClick={(e) => removeTab(tab.id, e)}
+                className={`p-1 hover:text-rose-400 hover:bg-white/10 rounded-full transition-colors shrink-0 ${activeTab === tab.id ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
+              >
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  width="14"
+                  height="14"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <line x1="18" y1="6" x2="6" y2="18"></line>
+                  <line x1="6" y1="6" x2="18" y2="18"></line>
+                </svg>
+              </button>
+            )}
+          </div>
+        ))}
+        <button
+          onClick={addTab}
+          className="flex items-center justify-center min-w-[36px] min-h-[36px] w-9 h-9 rounded-full bg-white/10 hover:bg-white/20 border border-white/20 text-white transition-all cursor-pointer backdrop-blur-xl shrink-0 ml-1"
+          title="Thêm vòng quay mới"
+        >
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <line x1="12" y1="5" x2="12" y2="19"></line>
+            <line x1="5" y1="12" x2="19" y2="12"></line>
+          </svg>
+        </button>
+      </div>
+
+      {tabs.map((tab) => (
+        <LuckyWheelInstance
+          key={tab.id}
+          instanceId={tab.id}
+          isActive={activeTab === tab.id}
+          onTitleChange={(newTitle) => handleTitleChange(tab.id, newTitle)}
+          isMusicPlaying={isMusicPlaying}
+          toggleMusic={toggleMusic}
+        />
+      ))}
     </div>
   );
 };
